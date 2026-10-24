@@ -28,7 +28,7 @@ def core_api(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['inspect', 'install', 'check', 'status', 'cloud', 'solar'])
+    parser.add_argument('action', choices=['inspect', 'install', 'check', 'status', 'cloud', 'device', 'solar'])
     parser.add_argument('--archive', default='/tmp/nbpower-integration.zip')
     args = parser.parse_args()
     target = Path('/config/custom_components/nbpower')
@@ -91,7 +91,7 @@ def main():
                 if connection:
                     connection.close()
             print(json.dumps(result))
-    elif args.action == 'cloud':
+    elif args.action in ('cloud', 'device'):
         configured = json.loads(Path('/config/.storage/core.config_entries').read_text())['data']['entries']
         own = next((e for e in configured if e.get('domain') == 'nbpower'), None)
         if not own:
@@ -102,15 +102,37 @@ def main():
             data = own['data']
             client = api.NBPowerClient(access_token=data['access_token'],
                                       refresh_token=data.get('refresh_token'), user_server=data['user_server'])
+            stage = 'telemetry'
             try:
                 response = await client.status(data['imei'])
+                if args.action == 'device':
+                    responses = {}
+                    # Both commands are evidenced reads. No password guesses,
+                    # challenges, starts or configuration writes are performed.
+                    for command in (1, 47):
+                        stage = f'read_{command}'
+                        result = await client.call('ctrlNBP', {'imei': data['imei'], 'db': [command, 1]},
+                                                   origin=client._charger_servers[data['imei']])
+                        packet = result.get('res', {}).get('data', [])
+                        if len(packet) < 3 or packet[0] != len(packet)-1 or packet[1] != command:
+                            print(json.dumps({'read_command': command, 'response_header': packet[:3],
+                                              'response_length': len(packet)}))
+                            raise api.APIError('Unexpected read command response')
+                        responses[command] = packet[3:]
+                    version, config = responses[1], responses[47]
+                    if len(version) < 3 or len(config) < 11:
+                        raise api.APIError('Truncated device read')
+                    print(json.dumps({'firmware': version[0], 'device_num': version[1],
+                                      'meter_count': version[2], 'hardware_max_current_a': config[10],
+                                      'run_mode': config[4]}))
+                    return
                 values = api.parse_heartbeat(response.get('heartDB', {}).get('data'))
                 active = response.get('activeTime')
                 values['cloud_timestamp'] = active
                 values['age_seconds'] = round(time.time() - active/1000, 1) if isinstance(active, (int, float)) else None
                 print(json.dumps(values))
             except api.APIError as error:
-                print(json.dumps({'error': str(error)}))
+                print(json.dumps({'stage': stage, 'error': str(error)}))
         asyncio.run(read_status())
     elif args.action == 'solar':
         states = core_api('states')

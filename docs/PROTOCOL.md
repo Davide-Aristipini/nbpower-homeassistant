@@ -121,6 +121,11 @@ epoch o ISO con fuso esplicito e rifiuta dati oltre 120 secondi o nel futuro olt
 
 `ctrlNBP`, payload `{imei, db:[comando, req_id, ...parametri]}`, restituisce
 `.res.data`; l'app scarta i primi tre byte per ottenere la risposta comando.
+Le letture reali CMD 1 e 47 hanno confermato il formato di risposta e mostrato
+che il cloud sostituisce il req_id. Il primo byte coincide con la lunghezza
+totale meno uno; il secondo identifica il comando. Una colonnina letta riporta
+firmware 45, device_num 15, un contatore, massimo hardware 32 A e run_mode 1.
+Questo massimo hardware non sostituisce il limite della linea o del cavo.
 
 Pagina dispositivo `startCharge`, offset 324.321:
 
@@ -140,7 +145,8 @@ Pagina dispositivo `startCharge`, offset 324.321:
 Il proprietario ha eseguito una sessione reale con il client: OTP, login, elenco,
 discovery server e decodifica della telemetria sono riusciti per il dispositivo
 indicato. Sono disponibili i valori normalizzati forniti dal proprietario, non
-una cattura grezza dell'heartbeat. Il rinnovo reale e i comandi non sono ancora
-verificati. Le fixture dei test sono
+una cattura grezza dell'heartbeat. Le letture comando 1 e 47 sono state verificate;
+il rinnovo reale e i comandi che modificano la ricarica non lo sono ancora.
+Le fixture dei test sono
 **sintetiche**, costruite usando il formato e i valori indicativi dell'utente.
 OCPP, MQTT e UDP locale rimangono non confermati per questo modello.

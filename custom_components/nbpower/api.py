@@ -1,6 +1,6 @@
 """NBPower cloud protocol, evidenced by the official Android app 2.0.16.
 
-No charge-control requests are implemented. No response bodies are logged.
+Polling performs telemetry reads only. No response bodies are logged.
 """
 from __future__ import annotations
 
@@ -156,11 +156,38 @@ class NBPowerClient:
             raise APIError('Unexpected charger list')
         return chargers
 
-    async def status(self, imei):
+    async def _charger_origin(self, imei):
         if imei not in self._charger_servers:
             response = await self.call('getChargerServer', {'imei': imei})
             self._charger_servers[imei] = server_origin(response.get('server', ''))
-        return await self.call('getNBPNetStatus', {'imei': imei}, origin=self._charger_servers[imei])
+        return self._charger_servers[imei]
+
+    async def status(self, imei):
+        return await self.call('getNBPNetStatus', {'imei': imei}, origin=await self._charger_origin(imei))
+
+    async def _device_command(self, imei, command, params=()):
+        """Official cloud command envelope; never retry an uncertain transport failure."""
+        packet = [command, 1, *params]
+        if any(type(b) is not int or not 0 <= b <= 255 for b in packet):
+            raise APIError('Invalid device command bytes')
+        response = await self.call('ctrlNBP', {'imei': imei, 'db': packet},
+                                   origin=await self._charger_origin(imei))
+        try:
+            data = response['res']['data']
+            if (not isinstance(data, list) or len(data) < 3
+                    or any(type(b) is not int or not 0 <= b <= 255 for b in data)
+                    or data[0] != len(data)-1 or data[1] != command):
+                raise APIError('Invalid command response')
+            # The cloud replaces req_id: a real CMD 1 read echoed 145, not 1.
+            return data[3:]
+        except (KeyError, TypeError):
+            raise APIError('Missing command response') from None
+
+    async def read_command(self, imei, command):
+        """Allowlisted reads evidenced in the official app; no settings writes."""
+        if command not in (1, 47, 69):
+            raise APIError('Not an allowlisted read command')
+        return await self._device_command(imei, command)
 
 
 def parse_heartbeat(data):

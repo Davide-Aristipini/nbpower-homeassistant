@@ -72,6 +72,22 @@ class ParserTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_device_read_accepts_cloud_rewritten_request_id(self):
+        async def transport(url, payload):
+            if url.endswith('getChargerServer'):
+                return {'code': 0, 'server': 'g.echgr.com'}
+            self.assertEqual(payload['db'], [1, 1])
+            return {'code': 0, 'res': {'data': [8, 1, 145, 45, 31, 1, 0, 0, 1]}}
+        client = api.NBPowerClient(transport, user_server='g.echgr.com')
+        self.assertEqual(await client.read_command('synthetic-imei', 1), [45, 31, 1, 0, 0, 1])
+
+    async def test_read_allowlist_does_not_accept_start_commands(self):
+        async def transport(url, payload):
+            self.fail('A disallowed read must never send an HTTP request')
+        client = api.NBPowerClient(transport, user_server='g.echgr.com')
+        with self.assertRaises(api.APIError):
+            await client.read_command('synthetic-imei', 67)
+
     async def test_bootstrap_fallback(self):
         seen = []
         async def transport(url, payload):

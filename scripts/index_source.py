@@ -23,7 +23,7 @@ for name, start, end in [('transport', 539000, 550000), ('netmode', 1328500, 136
 endpoints = sorted(set(re.findall(r'\.send\("([A-Za-z0-9_]+)"', source)))
 (root / 'research' / 'endpoints.json').write_text(__import__('json').dumps(endpoints, indent=2), encoding='utf-8')
 targeted = []
-for needle in ['hex_md5_16:', 'hex_md5_16=', 'getBindedChargers', 'calcMeterDB:', 'getChargerKey', 'changeAmp', 'changePWM', 'stopCharge:function', 'startCharge:function', 'getNBPNetStatus', 'activeTime', 'maxAmp']:
+for needle in ['hex_md5_16:', 'hex_md5_16=', 'getBindedChargers', 'calcMeterDB:', 'getChargerKey', 'changeAmp', 'changePWM', 'stopCharge:function', 'startCharge:function', 'getNBPNetStatus', 'activeTime', 'maxAmp', 'chargerMaxAmp=', 'chargerMaxAmp:', 'sendCommand(!0,47', 'sendCommand(!1,47', 'sendCommand:function', 'checkChargePwd:function', 'amp2PwmRange:function']:
     for match in re.finditer(re.escape(needle), source):
         targeted.append('\nNEEDLE ' + needle + ' OFFSET ' + str(match.start()) + '\n' + source[max(0,match.start()-200):match.end()+2500])
 (root / 'research' / 'details.txt').write_text('\n'.join(targeted).replace(';', ';\n'), encoding='utf-8')
