@@ -1,0 +1,9 @@
+{
+  "params": {
+    "mail": "synthetic+test@example.invalid",
+    "data": {"package": [1, 2, 255]},
+    "flag": true
+  },
+  "timestamp": 1700000000,
+  "signature": "c3c7de296f87b5b0"
+}

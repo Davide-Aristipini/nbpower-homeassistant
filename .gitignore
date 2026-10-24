@@ -1,0 +1,12 @@
+__pycache__/
+.venv/
+private/
+research/
+dist/
+reports/
+docs/REPORT.md
+docs/DEPLOYMENT_PRIVATE.md
+*.pcap
+*.pcapng
+*.har
+*.apk

@@ -1,0 +1,12 @@
+{
+  "title": "NBPower",
+  "config": {
+    "step": {
+      "user": {"title": "NBPower account", "description": "Request an email code. Experimental cloud monitoring; hardware compatibility still needs validation.", "data": {"email": "Email"}},
+      "otp": {"title": "Email verification", "description": "Enter the code received by email. It is not saved.", "data": {"otp": "Verification code"}},
+      "charger": {"title": "Select your charger", "data": {"charger": "Charger"}}
+    },
+    "error": {"cannot_connect": "Cloud request failed or the server rejected the request.", "invalid_auth": "Authentication failed. Request a new code.", "invalid_email": "Enter a valid email address.", "wrong_charger": "Select the charger associated with this entry."},
+    "abort": {"no_chargers": "No associated charger was returned.", "already_configured": "This charger is already configured.", "reauth_successful": "Authentication updated.", "unknown": "Invalid charger selection."}
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "title": "NBPower",
+  "config": {
+    "step": {
+      "user": {"title": "Account NBPower", "description": "Richiedi un codice via email. Monitoraggio cloud sperimentale: la compatibilità hardware deve ancora essere verificata.", "data": {"email": "Email"}},
+      "otp": {"title": "Verifica email", "description": "Inserisci il codice ricevuto via email. Il codice non viene salvato.", "data": {"otp": "Codice di verifica"}},
+      "charger": {"title": "Seleziona la colonnina", "data": {"charger": "Colonnina"}}
+    },
+    "error": {"cannot_connect": "Richiesta cloud fallita o rifiutata dal server.", "invalid_auth": "Autenticazione fallita. Richiedi un nuovo codice.", "invalid_email": "Inserisci un indirizzo email valido.", "wrong_charger": "Seleziona la colonnina associata a questa configurazione."},
+    "abort": {"no_chargers": "Il server non ha restituito colonnine associate.", "already_configured": "Questa colonnina è già configurata.", "reauth_successful": "Autenticazione aggiornata.", "unknown": "Selezione della colonnina non valida."}
+  }
+}
