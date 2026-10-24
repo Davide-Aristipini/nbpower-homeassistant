@@ -5,6 +5,7 @@ Polling performs telemetry reads only. No response bodies are logged.
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -18,6 +19,10 @@ BOOTSTRAP = 'https://g.echgr.com'
 
 class APIError(Exception):
     """Sanitized transport, protocol or server error."""
+
+    def __init__(self, message, *, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 class AuthenticationError(APIError):
@@ -94,6 +99,8 @@ class NBPowerClient:
         self.address = None
         self._refresh_lock = asyncio.Lock()
         self._charger_servers = {}
+        self._meter_override = None
+        self.on_meter = None
 
     async def discover(self):
         payload = {'accesstoken': self.access_token} if self.access_token else {}
@@ -116,7 +123,7 @@ class NBPowerClient:
             raise AuthenticationError('Session expired')
         if response.get('code') != 0:
             code = response.get('code')
-            raise APIError('API rejected request (code %s)' % (code if isinstance(code, int) else 'unknown'))
+            raise APIError('API rejected request (code %s)' % (code if isinstance(code, int) else 'unknown'), code=code)
 
     def _save_tokens(self, response):
         if not isinstance(response.get('accesstoken'), str) or not response['accesstoken']:
@@ -158,18 +165,50 @@ class NBPowerClient:
 
     async def _charger_origin(self, imei):
         if imei not in self._charger_servers:
-            response = await self.call('getChargerServer', {'imei': imei})
+            try:
+                # The official global registry responds even when the regional
+                # getChargerServer route hangs. No command retries are involved.
+                response = await self.call('getChargerServer', {'imei': imei}, origin='https://c.echgr.com', retry=False)
+            except APIError:
+                response = await self.call('getChargerServer', {'imei': imei})
             self._charger_servers[imei] = server_origin(response.get('server', ''))
         return self._charger_servers[imei]
 
     async def status(self, imei):
-        return await self.call('getNBPNetStatus', {'imei': imei}, origin=await self._charger_origin(imei))
+        response = await self.call('getNBPNetStatus', {'imei': imei}, origin=await self._charger_origin(imei))
+        # Firmware updates its advertised PWM before the cloud meter cache.
+        # A direct meter read following a command must not be overwritten by
+        # the older cached record on the very next coordinator poll.
+        if self._meter_override and time.time()-self._meter_override[0] < 35:
+            stamp, payload = self._meter_override
+            try:
+                raw = response['heartDB']['data']
+                parsed = parse_heartbeat(raw)
+                if parsed['phases'] == 1:
+                    pos = raw[0]+1
+                    while pos < len(raw):
+                        size = raw[pos]
+                        if raw[pos+1] == 8:
+                            if raw[pos+3:pos+size+1] == payload:
+                                self._meter_override = None
+                            else:
+                                response = copy.deepcopy(response)
+                                response['heartDB']['data'] = raw[:pos]+[len(payload)+2,8,raw[pos+2],*payload]+raw[pos+size+1:]
+                                response['_meter_source'] = 'direct_device_read'
+                                response['_meter_sampled_at'] = stamp
+                            break
+                        pos += size+1
+            except (KeyError, TypeError, IndexError, APIError):
+                pass
+        return response
 
     async def _device_command(self, imei, command, params=()):
         """Official cloud command envelope; never retry an uncertain transport failure."""
         packet = [command, 1, *params]
         if any(type(b) is not int or not 0 <= b <= 255 for b in packet):
             raise APIError('Invalid device command bytes')
+        if command == 67:
+            self._meter_override = None
         response = await self.call('ctrlNBP', {'imei': imei, 'db': packet},
                                    origin=await self._charger_origin(imei))
         try:
@@ -179,13 +218,18 @@ class NBPowerClient:
                     or data[0] != len(data)-1 or data[1] != command):
                 raise APIError('Invalid command response')
             # The cloud replaces req_id: a real CMD 1 read echoed 145, not 1.
-            return data[3:]
+            payload = data[3:]
+            if command == 8:
+                self._meter_override = (time.time(), payload)
+                if self.on_meter:
+                    self.on_meter(payload, self._meter_override[0])
+            return payload
         except (KeyError, TypeError):
             raise APIError('Missing command response') from None
 
     async def read_command(self, imei, command):
         """Allowlisted reads evidenced in the official app; no settings writes."""
-        if command not in (1, 47, 69):
+        if command not in (1, 8, 47, 69):
             raise APIError('Not an allowlisted read command')
         return await self._device_command(imei, command)
 
@@ -211,7 +255,9 @@ def parse_heartbeat(data):
     result = {'firmware': version[0], 'state_code': charge[0],
               'state': {0: 'unplugged', 1: 'standby', 2: 'scheduled', 3: 'charging',
                         4: 'reduced_power', 5: 'cooling', 255: 'updating'}.get(charge[0], 'unknown'),
-              'error_code': charge[5], 'error_info': (charge[6] << 8) | charge[7]}
+              'error_code': charge[5], 'error_info': (charge[6] << 8) | charge[7],
+              'device_num': version[1] if len(version)>1 else None,
+              'current_limit_pwm': charge[3], 'advertised_current': charge[3]*60/250}
     for name, index in [('temperature', 1), ('temperature_2', 4), ('temperature_3', 2), ('temperature_4', 15)]:
         result[name] = charge[index]-40 if len(charge) > index and charge[index] != 255 else None
     def meter(raw):
@@ -230,6 +276,7 @@ def parse_heartbeat(data):
         raise APIError('Heartbeat lacks meter data')
     voltage, current, power, energy = meter(records[8])
     phases = charge[16] if version[0] > 27 and len(charge) > 16 else 1
+    result['phases'] = max(1, phases)
     if phases > 1:
         for command in (13, 14):
             if command not in records:
@@ -260,6 +307,7 @@ def telemetry(response, *, now=None, max_age=120):
             raise APIError('Heartbeat is stale')
         result = parse_heartbeat(response['heartDB']['data'])
         result['last_seen'] = datetime.fromtimestamp(stamp, timezone.utc)
+        result['meter_source'] = response.get('_meter_source', 'cloud_cache')
         return result
     except (KeyError, TypeError, ValueError, OverflowError):
         raise APIError('Invalid status envelope or timestamp') from None

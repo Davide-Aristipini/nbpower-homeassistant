@@ -1,7 +1,7 @@
 {
   "domain": "nbpower",
-  "name": "NBPower (experimental cloud monitoring)",
-  "version": "0.1.0",
+  "name": "NBPower",
+  "version": "0.2.0b1",
   "config_flow": true,
   "documentation": "https://github.com/Davide-Aristipini/nbpower-homeassistant",
   "issue_tracker": "https://github.com/Davide-Aristipini/nbpower-homeassistant/issues",

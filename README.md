@@ -6,14 +6,18 @@ one-time verification code.
 
 ## Current status
 
-**Monitoring release — charging controls are not available yet.**
+**v0.2.0b1 — experimental monitoring, opt-in controls and power management.**
 
 - Email/OTP login, charger discovery and telemetry have worked against a real
   NBPower charger reporting firmware 45.
 - Signed public requests have been accepted by the official servers; a negative
   signature control was rejected.
-- Installed and configured in Home Assistant **2026.8.1**: 12 entities were created,
-  and changing voltage plus recent timestamps were verified in the recorder.
+- Installed and configured in Home Assistant **2026.8.1**. Readings, start/stop,
+  active current changes and automatic charging have been field-tested on a
+  **single-phase AC charger, firmware 45, device_num 15, one meter**.
+- Physical tests changed the requested current from 6 A to 8 A, back to 6 A,
+  confirmed zero-power standby after stop, and resumed finite-duration charging.
+- Controls remain **disabled by default**. Three-phase/DC control is not supported.
 - Token refresh and protocol error handling have unit tests; real token expiry
   and reconnection behavior still need field testing.
 - No OCPP or local Wi-Fi API is claimed for this device.
@@ -54,6 +58,13 @@ reports a validation problem, and open an issue with the sanitized error.
 | Last seen | Timestamp of cloud telemetry |
 | Connection | Whether recent telemetry was retrieved and decoded successfully |
 
+When verified controls are enabled in the integration options, additional entities
+provide start/stop buttons, charging authorization, an automatic-management switch,
+a user current ceiling, the advertised limit, budget/current targets and control status.
+
+Charging authorization is permission to charge; it is not a claim that the vehicle
+is drawing energy. Use charge state and measured power for actual charging.
+
 Polling runs every 15 seconds. Heartbeats older than 120 seconds are rejected
 instead of being displayed as current measurements. Cloud update frequency may
 differ from the polling frequency.
@@ -78,16 +89,46 @@ python scripts/probe_cloud.py
 Enter credentials interactively. Tokens are not saved by this script. Never
 include credentials in command-line arguments, issue reports or screenshots.
 
-## Solar-surplus charging roadmap
+## Opt-in controls and power management
 
-Solar-aware charging is a project goal, **not a feature of this monitoring release**.
-It requires validated start/stop and current-limit commands, actual electrical
-limits, grid import/export measurements and charge-session semantics.
+Open the integration options and configure verified installation limits and these
+power sensors (W or kW):
 
-Planned automation behavior includes bounded current regulation, start/stop
-hysteresis, protection against stale measurements, and explicit treatment of
-house batteries and grid import. Automations must not change the charger's
-hardware protection settings or exceed the installation/cable limits.
+- Total house load **including the EV charger**.
+- Signed grid power: positive import, negative export.
+- PV generation.
+- Signed home-battery power: positive discharge, negative charge.
+- Optional inverter losses and fresh vehicle SOC/target/age entities.
+
+This beta requires these energy inputs for its control workflow. Enable the
+automatic-management switch after configuration. A user stop clears charging
+authorization, so normal load management does not immediately restart it.
+
+The manager charges when there is headroom, including from the grid. It caps the
+car's use of a discharging home battery, allows solar surplus in addition, and
+reduces/pauses charging when the configured grid/house allowance is exhausted.
+It does not force 6 A when there is insufficient room for the minimum current.
+Increases are gradual; commands are serialized and have a cooldown.
+
+Defaults are conservative examples, **not installation limits inferred for your
+home**. Set the current/power/grid/battery limits for your own equipment.
+Controls are limited to the verified single-meter AC protocol. The implementation
+uses a 253 V upper operating envelope for current-to-power bounds.
+
+Sessions have a finite configured duration (default eight hours). Active-session
+takeover is explicit, uses the official app's update path and preserves the
+authorized end time. No protection settings are written automatically on setup.
+
+These are cloud controls, not instantaneous electrical protection. The device may
+acknowledge a new PWM limit before cached power updates. The client reads the
+device meter after commands and confirms outcomes from fresh telemetry rather
+than blindly retrying uncertain writes. Actual vehicle draw can be below the limit.
+
+The v0.1.0 monitoring-only prerelease remains available for installations that do
+not need the experimental controls.
+
+See [optional fast guards and vehicle-completion handling](docs/AUTOMATION_EXAMPLE.md)
+for an installation-level automation example.
 
 ## Development and diagnostics
 

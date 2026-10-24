@@ -1,9 +1,8 @@
 # Charge-control development
 
-The `feature/charge-control` branch contains a development backend in
-`custom_components/nbpower/control.py`. It is **not wired into Home Assistant
-entities, startup, polling or automations**. The published v0.1.0 monitoring
-release does not contain this backend.
+The `feature/charge-control` branch now contains the v0.2.0b1 opt-in controller
+and HA button/number/switch entities. v0.1.0 remains monitoring-only.
+Controls are disabled unless explicitly enabled and configured.
 
 ## Verified reads
 
@@ -41,15 +40,23 @@ The source of all limits must be verified for each installation.
 
 ## Tests and remaining validation
 
-22 protocol/client/controller tests pass locally. Tests cover power/current
+36 protocol/client/controller/budget tests pass locally. Tests cover power/current
 bounds, unknown limits, stale data, finite duration, rejected commands, response
 correlation, and start/update/stop sequencing with a simulated transport.
 
-**No real start, current change or stop has been performed.** A physical test
-was deferred because the vehicle was fully charged. Owner consent and a vehicle
-ready to accept charge are required before invoking these methods on hardware.
+Real single-phase firmware-45/device-15 tests have now verified active 6 A / 8 A
+changes, return to 6 A, zero-power standby after stop, and finite-session restart.
+Only the maximum-current byte was changed during an owner-authorized hardware
+reduction; all other configuration bytes were preserved and reread.
 
-Next steps are physical command validation, observation of run_mode behavior,
-Home Assistant options and control entities, then solar-surplus automations.
-No unattended charging automation should be based on this development backend
-before these checks are completed.
+The official active update uses the marker authentication bytes shown in the app,
+only after explicit adoption of a running session. Idle starts still use CMD 66.
+Stops may return a short reply; a transport timeout does not prove rejection.
+The controller confirms the intended state/limit/timer without resending the write.
+
+The firmware/cloud can update PWM before the meter cache (about twenty seconds
+observed). Direct CMD 8 meter reads and a short override prevent the next poll
+from replacing fresher measurements with the old cloud cache.
+
+See README for required energy sensors, sign conventions and automatic budgets.
+Other hardware variants and three-phase/DC controls remain unverified/unsupported.

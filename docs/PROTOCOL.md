@@ -117,7 +117,7 @@ successivo. Byte e lunghezze sono verificati rigorosamente dal parser.
 epoch o ISO con fuso esplicito e rifiuta dati oltre 120 secondi o nel futuro oltre
 60 secondi. Il formato e il periodo reale vanno verificati sul primo login.
 
-## Comandi scoperti, non esposti
+## Comandi opt-in in v0.2
 
 `ctrlNBP`, payload `{imei, db:[comando, req_id, ...parametri]}`, restituisce
 `.res.data`; l'app scarta i primi tre byte per ottenere la risposta comando.
@@ -136,17 +136,28 @@ Pagina dispositivo `startCharge`, offset 324.321:
   usare heartbeat con parametro zero per fermare**: l'APK mostra un altro percorso.
 - La modifica degli ampere durante la ricarica passa dal rinnovo dei parametri
   della sessione, quindi non va trattata come una semplice proprietà indipendente.
-- Protezioni, password e challenge non devono essere saltati. L'integrazione
-  iniziale non implementa questi comandi: servono modello, limiti e conferma della
-  prova fisica prima di sviluppare/verificare il controllo.
+- `pay(true)` / `startCharge(..., true)` usa un marcatore dedicato per modificare
+  una sessione già attiva. Questo percorso dell'app è riprodotto solo dopo
+  l'adozione esplicita della sessione; gli avvii da fermo usano CMD 66.
+- Avvio, variazione 6/8 A e stop sono stati verificati sulla variante AC
+  monofase firmware 45 / device_num 15. Risposte stop corte e timeout non
+  equivalgono a un rifiuto: il risultato viene verificato con telemetria fresca,
+  senza reinviare alla cieca il comando.
+- CMD 8 letto direttamente risolve il ritardo osservato fra nuovo PWM e cache
+  cloud del contatore. La lettura più recente non viene sovrascritta subito
+  dal precedente valore della cache.
+- CMD 48 è stato usato una volta, con autorizzazione, per abbassare il solo
+  byte del massimo di corrente; rilettura integrale dei parametri invariati.
+  L'integrazione non cambia automaticamente le protezioni al caricamento.
 
 ## Limiti delle evidenze
 
 Il proprietario ha eseguito una sessione reale con il client: OTP, login, elenco,
 discovery server e decodifica della telemetria sono riusciti per il dispositivo
 indicato. Sono disponibili i valori normalizzati forniti dal proprietario, non
-una cattura grezza dell'heartbeat. Le letture comando 1 e 47 sono state verificate;
-il rinnovo reale e i comandi che modificano la ricarica non lo sono ancora.
+una cattura grezza dell'heartbeat. Letture e controlli sono ora verificati
+sulla sola variante monofase descritta. Il rinnovo reale su scadenza resta
+da convalidare sul campo; concorrenza e limiti sono testati automaticamente.
 Le fixture dei test sono
 **sintetiche**, costruite usando il formato e i valori indicativi dell'utente.
 OCPP, MQTT e UDP locale rimangono non confermati per questo modello.

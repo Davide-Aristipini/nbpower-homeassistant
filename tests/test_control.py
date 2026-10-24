@@ -6,7 +6,7 @@ import time
 import types
 import unittest
 
-from test_api import heartbeat
+from test_api import heartbeat, frame
 
 package = types.ModuleType('nbpower_control_test')
 package.__path__ = [str(Path(__file__).resolve().parents[1] / 'custom_components/nbpower')]
@@ -21,23 +21,51 @@ class FakeClient:
         self.maximum = 32
         self.age = 0
         self.accept = True
+        self.stopped = False
+        self.pwm = 90
+        self.minutes = 1
+        self.uncertain = False
+        self.short_stop = False
 
     async def read_command(self, imei, command):
         if command == 1:
             return [45, 31, 1]
         if command == 47:
-            return [0]*10 + [self.maximum]
+            return [0xB3,60,80,40,1,2,88,50,0,0,self.maximum,7,12,128,1]
+        if command == 8:
+            return self.meter()
+        if command == 69:
+            return [1 if self.stopped else 3,self.minutes>>8,self.minutes&255,0,0,0,0,0]
         raise AssertionError('Unexpected read')
 
+    def meter(self):
+        current = 0 if self.stopped else int(self.pwm*60/250*10)
+        power = int(current/10*225.5)
+        return [8,207,current>>8,current&255,power>>8,power&255,0,3]
+
     async def status(self, imei):
-        return {'activeTime': (time.time()-self.age)*1000, 'heartDB': {'data': heartbeat()}}
+        charge = [1 if self.stopped else 3,68,255,self.pwm,255,0,0,0,1,0,0,0,0,0,0,255,1]
+        data = [4,15,0,0,0]+frame(1,[45,15,1])+frame(49,charge)+frame(8,self.meter())
+        return {'activeTime': (time.time()-self.age)*1000, 'heartDB': {'data': data}}
 
     async def _device_command(self, imei, command, params=()):
         self.commands.append((command, list(params)))
         if command == 66:
             return [17, 34, 51, 68, 85]
         if command == 67:
+            if self.accept:
+                self.minutes=params[6]*256+params[7]
+                self.stopped=self.minutes==0
+                self.pwm=params[10]
+            if self.uncertain:
+                self.uncertain=False
+                raise api.APIError('HTTPS request failed')
+            if self.stopped and self.short_stop:
+                return [1]
             return [2 if self.accept else 1, params[6], params[7]]
+        if command == 48:
+            self.maximum=params[10]
+            return [1]
         raise AssertionError('Unexpected write')
 
 
@@ -74,7 +102,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controller.deadline, deadline)
         await self.controller.stop()
         self.assertIsNone(self.controller.deadline)
-        self.assertEqual([c[0] for c in self.client.commands], [66, 67, 66, 67, 66, 67])
+        self.assertEqual([c[0] for c in self.client.commands], [66, 67, 67, 66, 67])
         self.assertEqual(self.client.commands[-1][1][6:8], [0, 0])
 
     async def test_stale_state_never_sends_start(self):
@@ -93,6 +121,37 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(api.APIError):
             await self.controller.update_current(6)
         self.assertEqual(self.client.commands, [])
+
+    async def test_explicit_adoption_preserves_untimed_session(self):
+        self.client.minutes=65535
+        await self.controller.adopt_current_session()
+        await self.controller.update_current(6)
+        self.assertEqual([c[0] for c in self.client.commands],[67])
+        self.assertEqual(self.client.commands[0][1][:8],[1,1,1,1,1,0,255,255])
+
+    async def test_short_stop_ack_requires_stopped_telemetry(self):
+        self.client.short_stop=True
+        await self.controller.stop()
+        self.assertEqual(self.controller.last_confirmation,'fresh_telemetry')
+        self.assertTrue(self.client.stopped)
+
+    async def test_transport_timeout_does_not_repeat_applied_start(self):
+        self.client.uncertain=True
+        await self.controller.start(6,minutes=1)
+        self.assertEqual(self.controller.last_confirmation,'fresh_telemetry')
+        self.assertEqual([c[0] for c in self.client.commands].count(67),1)
+
+    async def test_hardware_reduction_preserves_protection_bytes(self):
+        self.client.stopped=True
+        changed=await self.controller.reduce_hardware_limit(21)
+        self.assertEqual([i for i,(a,b) in enumerate(zip(changed['before'],changed['after'])) if a!=b],[10])
+        self.assertEqual(changed['after'][10],21)
+
+    async def test_hardware_limit_cannot_be_raised(self):
+        self.client.stopped=True
+        with self.assertRaises(api.APIError):
+            await self.controller.reduce_hardware_limit(40)
+        self.assertEqual(self.client.commands,[])
 
     async def test_rejected_start_not_retried(self):
         self.client.accept = False

@@ -1,6 +1,7 @@
 """Email / OTP login. OTP is used in memory and never saved in config data."""
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from .api import APIError, AuthenticationError, NBPowerClient
 from .const import DOMAIN
@@ -15,6 +16,11 @@ class NBPowerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.email = None
         self.chargers = []
         self.reauth_entry = None
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return NBPowerOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input=None):
         errors = {}
@@ -75,3 +81,26 @@ class NBPowerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth(self, entry_data):
         self.reauth_entry = self.hass.config_entries.async_get_entry(self.context['entry_id'])
         return await self.async_step_user()
+
+
+class NBPowerOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self, entry):
+        self.entry = entry
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title='', data={**self.entry.options, **user_input})
+        old = self.entry.options
+        fields = {
+            vol.Optional('enable_controls', default=old.get('enable_controls', False)): bool,
+            vol.Optional('max_current_a', default=old.get('max_current_a', 6)): vol.All(vol.Coerce(float), vol.Range(min=6,max=32)),
+            vol.Optional('max_power_w', default=old.get('max_power_w', 5000)): vol.All(vol.Coerce(float), vol.Range(min=1400,max=22000)),
+            vol.Optional('grid_limit_w', default=old.get('grid_limit_w', 6000)): vol.All(vol.Coerce(float), vol.Range(min=2000,max=50000)),
+            vol.Optional('grid_reserve_w', default=old.get('grid_reserve_w', 300)): vol.All(vol.Coerce(float), vol.Range(min=0,max=3000)),
+            vol.Optional('battery_limit_w', default=old.get('battery_limit_w', 2000)): vol.All(vol.Coerce(float), vol.Range(min=0,max=22000)),
+            vol.Optional('session_minutes', default=old.get('session_minutes', 480)): vol.All(vol.Coerce(int), vol.Range(min=1,max=1440)),
+        }
+        for key in ('house_power_entity','grid_power_entity','pv_power_entity','battery_power_entity','losses_power_entity',
+                    'car_soc_entity','car_target_soc_entity','car_data_age_entity'):
+            fields[vol.Optional(key,default=old.get(key,''))] = str
+        return self.async_show_form(step_id='init',data_schema=vol.Schema(fields))

@@ -72,6 +72,36 @@ class ParserTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_global_charger_registry_preferred_over_hanging_regional_route(self):
+        seen=[]
+        async def transport(url,payload):
+            seen.append(url)
+            if url.endswith('getChargerServer'):
+                self.assertTrue(url.startswith('https://c.echgr.com/'))
+                return {'code':0,'server':'g.echgr.com'}
+            return {'code':0}
+        client=api.NBPowerClient(transport,user_server='g.echgr.com')
+        await client.status('synthetic-imei')
+        self.assertEqual(len(seen),2)
+
+    async def test_fresh_device_meter_temporarily_overrides_stale_cloud_meter(self):
+        old=heartbeat()
+        fresh=[8,207,0,60,5,73,0,4]
+        async def transport(url,payload):
+            if url.endswith('getChargerServer'):
+                return {'code':0,'server':'g.echgr.com'}
+            if url.endswith('ctrlNBP'):
+                return {'code':0,'res':{'data':[10,8,42,*fresh]}}
+            return {'code':0,'activeTime':1000000,'heartDB':{'data':old}}
+        client=api.NBPowerClient(transport,user_server='g.echgr.com')
+        await client.read_command('synthetic-imei',8)
+        result=await client.status('synthetic-imei')
+        values=api.parse_heartbeat(result['heartDB']['data'])
+        self.assertEqual(values['current'],6)
+        self.assertEqual(values['power'],1353)
+        self.assertEqual(result['_meter_source'],'direct_device_read')
+        self.assertEqual(api.parse_heartbeat(old)['current'],21.5)
+
     async def test_device_read_accepts_cloud_rewritten_request_id(self):
         async def transport(url, payload):
             if url.endswith('getChargerServer'):
